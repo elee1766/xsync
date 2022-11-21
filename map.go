@@ -77,6 +77,9 @@ type Map struct {
 	resizeMu     sync.Mutex     // only used along with resizeCond
 	resizeCond   sync.Cond      // used to wake up resize waiters (concurrent modifications)
 	table        unsafe.Pointer // *mapTable
+
+	preinit     bool      // this is marked true when the map is initialized using NewMap or NewMapPresized. It removes the atomic initialization check
+	initialized sync.Once // used to initialize the Map such that the zero value may be used.
 }
 
 type mapTable struct {
@@ -129,16 +132,25 @@ func NewMap() *Map {
 // sizeHint entries. If sizeHint is zero or negative, the value is ignored.
 func NewMapPresized(sizeHint int) *Map {
 	m := &Map{}
-	m.resizeCond = *sync.NewCond(&m.resizeMu)
-	var table *mapTable
-	if sizeHint <= minMapTableCap {
-		table = newMapTable(minMapTableLen)
-	} else {
-		tableLen := nextPowOf2(uint32(sizeHint / entriesPerMapBucket))
-		table = newMapTable(int(tableLen))
-	}
-	atomic.StorePointer(&m.table, unsafe.Pointer(table))
+	m.init(sizeHint)
+	m.preinit = true
 	return m
+}
+func (m *Map) init(sizeHint int) {
+	if m.preinit {
+		return
+	}
+	m.initialized.Do(func() {
+		m.resizeCond = *sync.NewCond(&m.resizeMu)
+		var table *mapTable
+		if sizeHint <= minMapTableCap {
+			table = newMapTable(minMapTableLen)
+		} else {
+			tableLen := nextPowOf2(uint32(sizeHint / entriesPerMapBucket))
+			table = newMapTable(int(tableLen))
+		}
+		atomic.StorePointer(&m.table, unsafe.Pointer(table))
+	})
 }
 
 func newMapTable(tableLen int) *mapTable {
@@ -162,6 +174,7 @@ func newMapTable(tableLen int) *mapTable {
 // value is present.
 // The ok result indicates whether value was found in the map.
 func (m *Map) Load(key string) (value interface{}, ok bool) {
+	m.init(minMapTableCap)
 	table := (*mapTable)(atomic.LoadPointer(&m.table))
 	hash := hashString(table.seed, key)
 	bidx := uint64(len(table.buckets)-1) & hash
@@ -297,6 +310,7 @@ func (m *Map) doCompute(
 	valueFn func(oldValue interface{}, loaded bool) (interface{}, bool),
 	loadIfExists, computeOnly bool,
 ) (interface{}, bool) {
+	m.init(minMapTableCap)
 	// Read-only path.
 	if loadIfExists {
 		if v, ok := m.Load(key); ok {
@@ -582,6 +596,7 @@ func isEmptyBucket(rootb *bucketPadded) bool {
 // concurrent modification rule apply, i.e. the changes may be not
 // reflected in the subsequently iterated entries.
 func (m *Map) Range(f func(key string, value interface{}) bool) {
+	m.init(minMapTableCap)
 	var zeroEntry rangeEntry
 	// Pre-allocate array big enough to fit entries for most hash tables.
 	bentries := make([]rangeEntry, 0, 16*entriesPerMapBucket)
@@ -625,12 +640,14 @@ func (m *Map) Range(f func(key string, value interface{}) bool) {
 
 // Clear deletes all keys and values currently stored in the map.
 func (m *Map) Clear() {
+	m.init(minMapTableCap)
 	table := (*mapTable)(atomic.LoadPointer(&m.table))
 	m.resize(table, mapClearHint)
 }
 
 // Size returns current size of the map.
 func (m *Map) Size() int {
+	m.init(minMapTableCap)
 	table := (*mapTable)(atomic.LoadPointer(&m.table))
 	return int(table.sumSize())
 }
@@ -742,6 +759,7 @@ func (s *mapStats) ToString() string {
 
 // O(N) operation; use for debug purposes only
 func (m *Map) stats() mapStats {
+	m.init(minMapTableCap)
 	stats := mapStats{
 		TotalGrowths: atomic.LoadInt64(&m.totalGrowths),
 		TotalShrinks: atomic.LoadInt64(&m.totalShrinks),

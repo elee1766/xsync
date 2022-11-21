@@ -66,6 +66,37 @@ func TestMapOf_EmptyStringKey(t *testing.T) {
 	}
 }
 
+func TestMapOf_ValidEmptyCaseString(t *testing.T) {
+	m := new(MapOf[string, string])
+	m.Store("", "foobar")
+	v, ok := m.Load("")
+	if !ok {
+		t.Fatal("value was expected")
+	}
+	if v != "foobar" {
+		t.Fatalf("value does not match: %v", v)
+	}
+}
+func TestMapOf_ValidEmptyCasePoint(t *testing.T) {
+	m := new(MapOf[point, string])
+	m.Store(point{}, "foobar")
+	m.Store(point{1, 2}, "foobart")
+	v, ok := m.Load(point{})
+	if !ok {
+		t.Fatal("value was expected")
+	}
+	if v != "foobar" {
+		t.Fatalf("value does not match: %v", v)
+	}
+	v, ok = m.Load(point{1, 2})
+	if !ok {
+		t.Fatal("value was expected")
+	}
+	if v != "foobart" {
+		t.Fatalf("value does not match: %v", v)
+	}
+}
+
 func TestMapOfStore_NilValue(t *testing.T) {
 	m := NewMapOf[*struct{}]()
 	m.Store("foo", nil)
@@ -1073,6 +1104,24 @@ func benchmarkMapOfStringKeys(
 			}
 		}
 	})
+}
+func BenchmarkIntegerMapOfNilValue_NoWarmUp(b *testing.B) {
+	for _, bc := range benchmarkCases {
+		if bc.readPercentage == 100 {
+			// This benchmark doesn't make sense without a warm-up.
+			continue
+		}
+		b.Run(bc.name, func(b *testing.B) {
+			m := new(MapOf[int, int])
+			benchmarkMapOfIntegerKeys(b, func(k int) (int, bool) {
+				return m.Load(k)
+			}, func(k int, v int) {
+				m.Store(k, v)
+			}, func(k int) {
+				m.Delete(k)
+			}, bc.readPercentage)
+		})
+	}
 }
 
 func BenchmarkIntegerMapOf_NoWarmUp(b *testing.B) {

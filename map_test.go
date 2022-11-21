@@ -56,6 +56,15 @@ func TestMap_BucketStructSize(t *testing.T) {
 	}
 }
 
+func TestMap_ZeroValueValid(t *testing.T) {
+	EnableAssertions()
+	m := new(Map)
+	v := 42
+	m.Store("foo", v)
+	m.Store("foo", v)
+	DisableAssertions()
+}
+
 func TestMap_UniqueValuePointers_Int(t *testing.T) {
 	EnableAssertions()
 	m := NewMap()
